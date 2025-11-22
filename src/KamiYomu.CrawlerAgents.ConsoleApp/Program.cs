@@ -1,14 +1,22 @@
 ﻿using KamiYomu.CrawlerAgents.Core;
 using KamiYomu.CrawlerAgents.Core.Catalog;
 using KamiYomu.CrawlerAgents.MangaFire;
+using Microsoft.Extensions.Logging;
 using Spectre.Console;
 
 #region startup
 AnsiConsole.MarkupLine("[bold underline green]KamiYomu AgentCrawler Validator[/]\n");
+using var loggerFactory = LoggerFactory.Create(builder =>
+{
+    builder.AddConsole(); 
+});
+
+ILogger logger = loggerFactory.CreateLogger<Program>();
 
 var options = new Dictionary<string, object>()
 {
-    { "Language" , "pt-br" }
+    { "Language" , "pt-br" },
+    { CrawlerAgentSettings.DefaultInputs.KamiYomuILogger, logger }
 };
 ICrawlerAgent crawler = new MangaFireCrawlerAgent(options);
 var results = new List<(string Method, bool Success, string Message)>();
@@ -116,7 +124,7 @@ try
 }
 catch (Exception ex)
 {
-    results.Add((nameof(HttpClient.GetByteArrayAsync), false, ex.InnerException.StackTrace));
+    results.Add((nameof(HttpClient.GetByteArrayAsync), false, ex.Message));
 }
 #endregion
 

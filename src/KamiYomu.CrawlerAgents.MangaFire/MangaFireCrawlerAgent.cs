@@ -7,6 +7,7 @@ using KamiYomu.CrawlerAgents.Core.Inputs;
 using Microsoft.Extensions.Logging;
 using PuppeteerSharp;
 using System.ComponentModel;
+using System.Globalization;
 using System.Text.RegularExpressions;
 using System.Web;
 using Page = KamiYomu.CrawlerAgents.Core.Catalog.Page;
@@ -23,7 +24,7 @@ namespace KamiYomu.CrawlerAgents.MangaFire;
   "pt",
   "pt-br"
 ])]
-[CrawlerText("PageLoadingTimeout", "Enter the delay, in milliseconds, to wait before fetching the next page while downloading.", true, "5000")]
+[CrawlerText("PageLoadingTimeout", "Enter the delay, in milliseconds, to wait before fetching the next page while downloading.", true, "3500")]
 public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsyncDisposable
 {
     private bool _disposed = false;
@@ -70,7 +71,7 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
         }
         else
         {
-            _pageLoadingTimeoutValue = 5_000;
+            _pageLoadingTimeoutValue = 3_500;
         }
     }
 
@@ -281,6 +282,8 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
             Timeout = TimeoutMilliseconds
         });
 
+        await page.WaitForSelectorAsync("#progress-bar");
+
         // Get total number of pages from progress-bar
         int totalPages = await page.EvaluateFunctionAsync<int>(@"
             () => {
@@ -289,7 +292,7 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
                     const val = parseInt(totalEl.textContent.trim(), 10);
                     return isNaN(val) ? 0 : val;
                 }
-                const lis = document.querySelectorAll('#progress-bar ul li[data-page]');
+                const lis = document.querySelectorAll('#progress-bar ul li');
                 return lis.length;
             }
         ");
@@ -299,17 +302,24 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
         // Click each progress-bar item one by one to trigger lazy loading
         for (int i = 1; i <= totalPages; i++)
         {
+            Logger?.LogInformation("Activing ProgressBar to page {page} of {totalPages}", i, totalPages);
             await page.EvaluateExpressionAsync($@"
             (() => {{
-                const li = document.querySelector(`#progress-bar ul li[data-page='{i}']`);
+                const li = document.querySelector(`#progress-bar ul li[data-name='{i}']`);
                 if (li) li.click();
-            }})();
-        ");
-            await Task.Delay(_pageLoadingTimeoutValue, cancellationToken); // wait for image to load
+            }})();");
+            await Task.Delay(_pageLoadingTimeoutValue, cancellationToken);
+            Logger?.LogInformation("Moving ProgressBar from page {from} to page {page} of {totalPages}", i, i + 1, totalPages);
         }
 
-        // Wait until at least one image has src
         await page.WaitForSelectorAsync("#page-wrapper .img.swiper-slide.loaded img[src], .page img[src]");
+
+        var imageUrls = await page.EvaluateExpressionAsync<string[]>(@"
+            Array.from(document.querySelectorAll('#page-wrapper .img.swiper-slide.loaded img[src], .page img[src]'))
+                 .map(img => img.getAttribute('src'))
+        ");
+
+        Logger?.LogInformation("Last Image: {image}", imageUrls.LastOrDefault());
 
         // Get fully loaded HTML
         var content = await page.GetContentAsync();
@@ -611,21 +621,26 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
 
         await page.EmulateTimezoneAsync(localTimeZone);
 
-        await page.EvaluateExpressionOnNewDocumentAsync(@"
+        var fixedDate = DateTime.Now;
+
+        var fixedDateIso = fixedDate.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
+
+        await page.EvaluateExpressionOnNewDocumentAsync($@"
             // Freeze time to a specific date
-            const fixedDate = new Date('2025-11-21T12:00:00Z');
-            Date = class extends Date {
-                constructor(...args) {
-                    if (args.length === 0) {
+            const fixedDate = new Date('{fixedDateIso}');
+            Date = class extends Date {{
+                constructor(...args) {{
+                    if (args.length === 0) {{
                         return fixedDate;
-                    }
+                    }}
                     return super(...args);
-                }
-                static now() {
+                }}
+                static now() {{
                     return fixedDate.getTime();
-                }
-            };
+                }}
+            }};
         ");
+
     }
 
     /// <inheritdoc/>

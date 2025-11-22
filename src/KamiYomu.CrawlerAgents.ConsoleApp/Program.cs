@@ -8,6 +8,7 @@ AnsiConsole.MarkupLine("[bold underline green]KamiYomu AgentCrawler Validator[/]
 
 var options = new Dictionary<string, object>()
 {
+    { "Language" , "pt-br" }
 };
 ICrawlerAgent crawler = new MangaFireCrawlerAgent(options);
 var results = new List<(string Method, bool Success, string Message)>();

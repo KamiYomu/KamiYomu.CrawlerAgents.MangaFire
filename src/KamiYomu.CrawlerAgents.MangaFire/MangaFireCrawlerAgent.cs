@@ -23,7 +23,7 @@ namespace KamiYomu.CrawlerAgents.MangaFire;
   "pt",
   "pt-br"
 ])]
-[CrawlerText("PageLoadingTimeout", "Enter the delay, in milliseconds, to wait before fetching the next page while downloading.", true, "1500")]
+[CrawlerText("PageLoadingTimeout", "Enter the delay, in milliseconds, to wait before fetching the next page while downloading.", true, "3000")]
 public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsyncDisposable
 {
     private bool _disposed = false;
@@ -70,7 +70,7 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
         }
         else
         {
-            _pageLoadingTimeoutValue = 1500;
+            _pageLoadingTimeoutValue = 3_000;
         }
     }
 
@@ -228,7 +228,7 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
         var finalUrl = new Uri(_baseUri, $"manga/{id}").ToString();
         var response = await page.GoToAsync(finalUrl, new NavigationOptions
         {
-            WaitUntil = [WaitUntilNavigation.Networkidle0],
+            WaitUntil = [WaitUntilNavigation.DOMContentLoaded, WaitUntilNavigation.Load],
             Timeout = TimeoutMilliseconds
         });
 
@@ -251,7 +251,7 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
         var finalUrl = new Uri(_baseUri, $"manga/{manga.Id}").ToString();
         var response = await page.GoToAsync(finalUrl, new NavigationOptions
         {
-            WaitUntil = [WaitUntilNavigation.Networkidle0],
+            WaitUntil = [WaitUntilNavigation.DOMContentLoaded, WaitUntilNavigation.Load],
             Timeout = TimeoutMilliseconds
         });
 
@@ -277,7 +277,7 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
 
         await page.GoToAsync(chapter.Uri.ToString(), new NavigationOptions
         {
-            WaitUntil = new[] { WaitUntilNavigation.DOMContentLoaded, WaitUntilNavigation.Load },
+            WaitUntil = [WaitUntilNavigation.DOMContentLoaded, WaitUntilNavigation.Load],
             Timeout = TimeoutMilliseconds
         });
 
@@ -477,7 +477,7 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
 
             // Uri
             var href = aNode.GetAttributeValue("href", string.Empty);
-            var uri = NormalizeUrl(href);
+            var uri = NormalizeUrl(href.Replace("/en/", $"/{_language}/"));
 
             // Title
             var titleSpan = aNode.SelectSingleNode("./span[1]");

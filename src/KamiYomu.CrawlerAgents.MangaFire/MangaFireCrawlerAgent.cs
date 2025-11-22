@@ -23,7 +23,7 @@ namespace KamiYomu.CrawlerAgents.MangaFire;
   "pt",
   "pt-br"
 ])]
-[CrawlerText("PageLoadingTimeout", "Enter the delay, in milliseconds, to wait before fetching the next page while downloading.", true, "3000")]
+[CrawlerText("PageLoadingTimeout", "Enter the delay, in milliseconds, to wait before fetching the next page while downloading.", true, "5000")]
 public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsyncDisposable
 {
     private bool _disposed = false;
@@ -70,7 +70,7 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
         }
         else
         {
-            _pageLoadingTimeoutValue = 3_000;
+            _pageLoadingTimeoutValue = 5_000;
         }
     }
 
@@ -294,6 +294,7 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
             }
         ");
 
+        Logger?.LogInformation("Number of Pages Expected: {totalPages}", totalPages);
 
         // Click each progress-bar item one by one to trigger lazy loading
         for (int i = 1; i <= totalPages; i++)
@@ -319,6 +320,8 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
         var imgNodes = document.DocumentNode.SelectNodes(
             "//div[contains(@class,'page')]//img | //div[@id='page-wrapper']//div[contains(@class,'img') and contains(@class,'swiper-slide') and contains(@class,'loaded')]/img"
         );
+
+        Logger?.LogInformation("Number of Page found {totalPages}", imgNodes.Count);
 
         return ConvertToChapterPages(chapter, imgNodes);
     }
@@ -457,6 +460,8 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
     private List<Chapter> ConvertChaptersFromSingleBook(Manga manga, HtmlNode rootNode)
     {
         var baseUri = new Uri(_baseUri.ToString());
+        var activeLangNode = rootNode.SelectSingleNode(".//div[@class='tab-content' and @data-name='chapter']//div[@class='dropdown-menu']/a[contains(@class,'active')]");
+        string activeLangCode = activeLangNode?.GetAttributeValue("data-code", "");
         var chapters = new List<Chapter>();
 
         // Select all chapter list items
@@ -477,7 +482,7 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
 
             // Uri
             var href = aNode.GetAttributeValue("href", string.Empty);
-            var uri = NormalizeUrl(href.Replace("/en/", $"/{_language}/"));
+            var uri = NormalizeUrl(href.Replace($"/{activeLangCode.ToLower()}/", $"/{_language}/"));
 
             // Title
             var titleSpan = aNode.SelectSingleNode("./span[1]");

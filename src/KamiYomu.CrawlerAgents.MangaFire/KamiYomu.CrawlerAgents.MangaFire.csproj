@@ -3,6 +3,7 @@
 	<PropertyGroup>
 		<TargetFramework>net8.0</TargetFramework>
 		<LangVersion>13</LangVersion>
+		<ImplicitUsings>enable</ImplicitUsings>
 	</PropertyGroup>
 
 	<PropertyGroup>
@@ -37,6 +38,6 @@
 		<PackageReference Include="KamiYomu.CrawlerAgents.Core" Version="1.1.4" />
 	</ItemGroup>
 
-	<Import Project="KamiYomu.CrawlerAgents.MangaKatana.props" />
+	<Import Project="KamiYomu.CrawlerAgents.MangaFire.props" />
 
 </Project>

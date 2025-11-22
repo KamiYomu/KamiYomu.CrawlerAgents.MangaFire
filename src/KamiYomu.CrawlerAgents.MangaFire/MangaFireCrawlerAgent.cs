@@ -6,6 +6,7 @@ using KamiYomu.CrawlerAgents.Core.Catalog.Definitions;
 using KamiYomu.CrawlerAgents.Core.Inputs;
 using Microsoft.Extensions.Logging;
 using PuppeteerSharp;
+using System;
 using System.ComponentModel;
 using System.Globalization;
 using System.Text.RegularExpressions;
@@ -24,7 +25,23 @@ namespace KamiYomu.CrawlerAgents.MangaFire;
   "pt",
   "pt-br"
 ])]
-[CrawlerText("PageLoadingTimeout", "Enter the delay, in milliseconds, to wait before fetching the next page while downloading.", true, "3500")]
+[CrawlerText("PageLoadingTimeout", "Enter the delay, in milliseconds, to wait before fetching the next page while downloading.", true, "3500", 2)]
+[CrawlerSelect("TimeZone", "If downloads don’t work properly, try changing your time zone.", true, 3, [
+    "America/New_York",
+    "America/Chicago",
+    "America/Denver",
+    "America/Los_Angeles",
+    "America/Sao_Paulo",
+    "Europe/London",
+    "Europe/Paris",
+    "Europe/Berlin",
+    "Asia/Tokyo",
+    "Asia/Shanghai",
+    "Asia/Kolkata",
+    "Australia/Sydney"
+])]
+
+
 public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsyncDisposable
 {
     private bool _disposed = false;
@@ -49,6 +66,7 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
     }
     private readonly string _language;
     private readonly int _pageLoadingTimeoutValue;
+    private readonly string _timezone;
 
     public MangaFireCrawlerAgent(IDictionary<string, object> options) : base(options)
     {
@@ -63,8 +81,17 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
             _language = "en";
         }
 
-        if (Options.TryGetValue("PageLoadingTimeout", out var pageLoadingTimeout) 
-            && pageLoadingTimeout is string pageLoadingTimeoutValue 
+        if (Options.TryGetValue("TimeZone", out var timezone) && timezone is string timezoneValue)
+        {
+            _timezone = timezoneValue;
+        }
+        else
+        {
+            _timezone = "America/New_York";
+        }
+
+        if (Options.TryGetValue("PageLoadingTimeout", out var pageLoadingTimeout)
+            && pageLoadingTimeout is string pageLoadingTimeoutValue
             && int.TryParse(pageLoadingTimeoutValue, out var pageLoadingTimeoutValueInt))
         {
             _pageLoadingTimeoutValue = pageLoadingTimeoutValueInt;
@@ -615,11 +642,9 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
         return vrfValue;
     }
 
-    private static async Task SetTimeZone(IPage page)
+    private async Task SetTimeZone(IPage page)
     {
-        var localTimeZone = TimeZoneInfo.Local.Id;
-
-        await page.EmulateTimezoneAsync(localTimeZone);
+        await page.EmulateTimezoneAsync(_timezone);
 
         var fixedDate = DateTime.Now;
 

@@ -18,7 +18,7 @@ A dedicated crawler agent for accessing public manga data from `mangafire.to`. B
    - Navigate to `Add-ons > Sources`
    - Add a new source with the URL: `https://api.nuget.org/v3/index.json` 
      for public packages or `https://nuget.pkg.github.com/KamiYomu/index.json`
-3. Locate and install the "KamiYomu Crawler Agent – MangaKatana.org" add-on.
+3. Locate and install the "KamiYomu Crawler Agent – MangaFire.to" add-on.
 4. Configure the add-on in the Add-ons UI as needed.
 
 ### Option B — Install as a package (for developers / extensibility)
@@ -45,7 +45,7 @@ Note: GitHub Packages may require authentication. Configure a personal access to
 ## Quick Start (high-level)
 1. Install the package (see above) or install it via add-on in KamiYomu.
 2. Register or enable the crawler within your KamiYomu instance (via Add-ons UI or your startup DI).
-3. Use the platform search or API to query MangaKatana.com data. Example usage patterns:
+3. Use the platform search or API to query `Mangafire.to` data. Example usage patterns:
    - Run searches for a title or tag
    - Fetch metadata for a specific series or chapter
    - Map extracted metadata into KamiYomu entities

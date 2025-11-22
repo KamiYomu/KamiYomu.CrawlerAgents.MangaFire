@@ -10,6 +10,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Globalization;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Web;
@@ -113,34 +114,54 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
 
     public async Task<PagedResult<Manga>> SearchAsync(string titleName, PaginationOptions paginationOptions, CancellationToken cancellationToken)
     {
-        var token = await GetTokenAsync();
-
         var browser = await GetBrowserAsync();
         using var page = await browser.NewPageAsync();
-        await SetTimeZone(page);
+        await PreparePageForNavigationAsync(page);
         await page.SetUserAgentAsync(HttpClientDefaultUserAgent);
-        var queryParams = new Dictionary<string, string>
-        {
-            ["keyword"] = titleName,
-            ["vrf"] = token,
-            ["language[]"] = _language,
-        };
-        var encodedQuery = new FormUrlEncodedContent(queryParams).ReadAsStringAsync(cancellationToken).Result;
-        var builder = new UriBuilder(new Uri(new Uri(_baseUri.ToString()), "filter"))
-        {
-            Query = encodedQuery
-        };
 
-
-        var finalUrl = builder.Uri.ToString();
-
-        var response = await page.GoToAsync(finalUrl, new NavigationOptions
+        var targetUri = new Uri(new Uri(_baseUri.ToString()), "home");
+        await page.GoToAsync(targetUri.ToString(), new NavigationOptions
         {
-            WaitUntil = [WaitUntilNavigation.DOMContentLoaded, WaitUntilNavigation.Load],
+            WaitUntil = new[] { WaitUntilNavigation.DOMContentLoaded, WaitUntilNavigation.Load },
             Timeout = TimeoutMilliseconds
         });
+        var sb = new StringBuilder();
 
+        sb.AppendLine("(() => {");
+        sb.AppendLine("    const form = document.querySelector('form');");
+        sb.AppendLine("    if (form) {");
+        sb.AppendLine("        const hidden = document.createElement('input');");
+        sb.AppendLine("        hidden.type = 'hidden';");
+        sb.AppendLine("        hidden.name = 'language[]';");
+        sb.AppendLine($"        hidden.value = '{_language}';");
+        sb.AppendLine("        form.appendChild(hidden);");
+        sb.AppendLine("    }");
+        sb.AppendLine("})();");
+
+        await page.EvaluateExpressionAsync(sb.ToString());
+
+
+        // Wait for the input safely
+        await page.WaitForSelectorAsync("input[name='keyword']");
+
+        // Focus the input (often triggers VRF script)
+        await page.FocusAsync("input[name='keyword']");
+
+        // Optionally type something
+        await page.Keyboard.TypeAsync(titleName);
+        // Press Enter and wait for navigation
+        await Task.WhenAll(
+            page.Keyboard.PressAsync("Enter"),
+            page.WaitForNavigationAsync(new NavigationOptions
+            {
+                WaitUntil = new[] { WaitUntilNavigation.DOMContentLoaded, WaitUntilNavigation.Load },
+                Timeout = TimeoutMilliseconds
+            })
+        );
+
+        // Now the page has navigated
         var content = await page.GetContentAsync();
+
         var document = new HtmlDocument();
         document.LoadHtml(content);
 
@@ -252,7 +273,7 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
     {
         var browser = await GetBrowserAsync();
         using var page = await browser.NewPageAsync();
-        await SetTimeZone(page);
+        await PreparePageForNavigationAsync(page);
         await page.SetUserAgentAsync(HttpClientDefaultUserAgent);
 
         var finalUrl = new Uri(_baseUri, $"manga/{id}").ToString();
@@ -275,7 +296,7 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
     {
         var browser = await GetBrowserAsync();
         using var page = await browser.NewPageAsync();
-        await SetTimeZone(page);
+        await PreparePageForNavigationAsync(page);
         await page.SetUserAgentAsync(HttpClientDefaultUserAgent);
 
         var finalUrl = new Uri(_baseUri, $"manga/{manga.Id}").ToString();
@@ -302,7 +323,7 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
         var browser = await GetBrowserAsync();
         using var page = await browser.NewPageAsync();
 
-        await SetTimeZone(page);
+        await PreparePageForNavigationAsync(page);
         await page.SetUserAgentAsync(HttpClientDefaultUserAgent);
 
         await page.GoToAsync(chapter.Uri.ToString(), new NavigationOptions
@@ -602,23 +623,7 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
 
         using var page = await browser.NewPageAsync();
         await page.SetUserAgentAsync(HttpClientDefaultUserAgent);
-        await SetTimeZone(page);
-
-
-        // Inject overrides BEFORE any site scripts execute
-        await page.EvaluateExpressionOnNewDocumentAsync(@"
-        // Neutralize devtools detection
-        const originalLog = console.log;
-        console.log = function(...args) {
-            if (args.length === 1 && args[0] === '[object HTMLDivElement]') {
-                return; // skip detection trick
-            }
-            return originalLog.apply(console, args);
-        };
-
-        // Override reload to do nothing
-        window.location.reload = () => console.log('Reload prevented');
-    ");
+        await PreparePageForNavigationAsync(page);
 
         // Navigate to /home
         var targetUri = new Uri(new Uri(_baseUri.ToString()), "home");
@@ -660,8 +665,39 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
         return vrfValue;
     }
 
-    private async Task SetTimeZone(IPage page)
+    private async Task PreparePageForNavigationAsync(IPage page)
     {
+        page.Console += (sender, e) =>
+        {
+            // e.Message contains the console message
+            Logger?.LogDebug($"[Browser Console] {e.Message.Type}: {e.Message.Text}");
+
+            // You can also inspect arguments
+            if(e.Message.Args != null)
+            {
+                foreach (var arg in e.Message.Args)
+                {
+                    Logger?.LogDebug($"   Arg: {arg.RemoteObject.Value}");
+                }
+            }
+        };
+
+
+
+        await page.EvaluateExpressionOnNewDocumentAsync(@"
+        // Neutralize devtools detection
+        const originalLog = console.log;
+        console.log = function(...args) {
+            if (args.length === 1 && args[0] === '[object HTMLDivElement]') {
+                return; // skip detection trick
+            }
+            return originalLog.apply(console, args);
+        };
+
+        // Override reload to do nothing
+        window.location.reload = () => console.log('Reload prevented');
+    ");
+
         await page.EmulateTimezoneAsync(_timezone);
 
         var fixedDate = DateTime.Now;

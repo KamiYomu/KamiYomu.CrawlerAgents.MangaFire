@@ -6,9 +6,13 @@ using KamiYomu.CrawlerAgents.Core.Catalog.Definitions;
 using KamiYomu.CrawlerAgents.Core.Inputs;
 using Microsoft.Extensions.Logging;
 using PuppeteerSharp;
+using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Globalization;
+using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using System.Web;
 using Page = KamiYomu.CrawlerAgents.Core.Catalog.Page;
 
@@ -24,7 +28,23 @@ namespace KamiYomu.CrawlerAgents.MangaFire;
   "pt",
   "pt-br"
 ])]
-[CrawlerText("PageLoadingTimeout", "Enter the delay, in milliseconds, to wait before fetching the next page while downloading.", true, "3500")]
+[CrawlerText("PageLoadingTimeout", "Enter the delay, in milliseconds, to wait before fetching the next page while downloading.", true, "3500", 2)]
+[CrawlerSelect("TimeZone", "If downloads don’t work properly, try changing your time zone.", true, 3, [
+    "America/New_York",
+    "America/Chicago",
+    "America/Denver",
+    "America/Los_Angeles",
+    "America/Sao_Paulo",
+    "Europe/London",
+    "Europe/Paris",
+    "Europe/Berlin",
+    "Asia/Tokyo",
+    "Asia/Shanghai",
+    "Asia/Kolkata",
+    "Australia/Sydney"
+])]
+
+
 public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsyncDisposable
 {
     private bool _disposed = false;
@@ -49,6 +69,7 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
     }
     private readonly string _language;
     private readonly int _pageLoadingTimeoutValue;
+    private readonly string _timezone;
 
     public MangaFireCrawlerAgent(IDictionary<string, object> options) : base(options)
     {
@@ -63,8 +84,17 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
             _language = "en";
         }
 
-        if (Options.TryGetValue("PageLoadingTimeout", out var pageLoadingTimeout) 
-            && pageLoadingTimeout is string pageLoadingTimeoutValue 
+        if (Options.TryGetValue("TimeZone", out var timezone) && timezone is string timezoneValue)
+        {
+            _timezone = timezoneValue;
+        }
+        else
+        {
+            _timezone = "America/New_York";
+        }
+
+        if (Options.TryGetValue("PageLoadingTimeout", out var pageLoadingTimeout)
+            && pageLoadingTimeout is string pageLoadingTimeoutValue
             && int.TryParse(pageLoadingTimeoutValue, out var pageLoadingTimeoutValueInt))
         {
             _pageLoadingTimeoutValue = pageLoadingTimeoutValueInt;
@@ -84,34 +114,54 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
 
     public async Task<PagedResult<Manga>> SearchAsync(string titleName, PaginationOptions paginationOptions, CancellationToken cancellationToken)
     {
-        var token = await GetTokenAsync();
-
         var browser = await GetBrowserAsync();
         using var page = await browser.NewPageAsync();
-        await SetTimeZone(page);
+        await PreparePageForNavigationAsync(page);
         await page.SetUserAgentAsync(HttpClientDefaultUserAgent);
-        var queryParams = new Dictionary<string, string>
-        {
-            ["keyword"] = titleName,
-            ["vrf"] = token,
-            ["language[]"] = _language,
-        };
-        var encodedQuery = new FormUrlEncodedContent(queryParams).ReadAsStringAsync(cancellationToken).Result;
-        var builder = new UriBuilder(new Uri(new Uri(_baseUri.ToString()), "filter"))
-        {
-            Query = encodedQuery
-        };
 
-
-        var finalUrl = builder.Uri.ToString();
-
-        var response = await page.GoToAsync(finalUrl, new NavigationOptions
+        var targetUri = new Uri(new Uri(_baseUri.ToString()), "home");
+        await page.GoToAsync(targetUri.ToString(), new NavigationOptions
         {
-            WaitUntil = [WaitUntilNavigation.DOMContentLoaded, WaitUntilNavigation.Load],
+            WaitUntil = new[] { WaitUntilNavigation.DOMContentLoaded, WaitUntilNavigation.Load },
             Timeout = TimeoutMilliseconds
         });
+        var sb = new StringBuilder();
 
+        sb.AppendLine("(() => {");
+        sb.AppendLine("    const form = document.querySelector('form');");
+        sb.AppendLine("    if (form) {");
+        sb.AppendLine("        const hidden = document.createElement('input');");
+        sb.AppendLine("        hidden.type = 'hidden';");
+        sb.AppendLine("        hidden.name = 'language[]';");
+        sb.AppendLine($"        hidden.value = '{_language}';");
+        sb.AppendLine("        form.appendChild(hidden);");
+        sb.AppendLine("    }");
+        sb.AppendLine("})();");
+
+        await page.EvaluateExpressionAsync(sb.ToString());
+
+
+        // Wait for the input safely
+        await page.WaitForSelectorAsync("input[name='keyword']");
+
+        // Focus the input (often triggers VRF script)
+        await page.FocusAsync("input[name='keyword']");
+
+        // Optionally type something
+        await page.Keyboard.TypeAsync(titleName);
+        // Press Enter and wait for navigation
+        await Task.WhenAll(
+            page.Keyboard.PressAsync("Enter"),
+            page.WaitForNavigationAsync(new NavigationOptions
+            {
+                WaitUntil = new[] { WaitUntilNavigation.DOMContentLoaded, WaitUntilNavigation.Load },
+                Timeout = TimeoutMilliseconds
+            })
+        );
+
+        // Now the page has navigated
         var content = await page.GetContentAsync();
+
         var document = new HtmlDocument();
         document.LoadHtml(content);
 
@@ -223,7 +273,7 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
     {
         var browser = await GetBrowserAsync();
         using var page = await browser.NewPageAsync();
-        await SetTimeZone(page);
+        await PreparePageForNavigationAsync(page);
         await page.SetUserAgentAsync(HttpClientDefaultUserAgent);
 
         var finalUrl = new Uri(_baseUri, $"manga/{id}").ToString();
@@ -246,7 +296,7 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
     {
         var browser = await GetBrowserAsync();
         using var page = await browser.NewPageAsync();
-        await SetTimeZone(page);
+        await PreparePageForNavigationAsync(page);
         await page.SetUserAgentAsync(HttpClientDefaultUserAgent);
 
         var finalUrl = new Uri(_baseUri, $"manga/{manga.Id}").ToString();
@@ -273,7 +323,7 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
         var browser = await GetBrowserAsync();
         using var page = await browser.NewPageAsync();
 
-        await SetTimeZone(page);
+        await PreparePageForNavigationAsync(page);
         await page.SetUserAgentAsync(HttpClientDefaultUserAgent);
 
         await page.GoToAsync(chapter.Uri.ToString(), new NavigationOptions
@@ -300,39 +350,55 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
         Logger?.LogInformation("Number of Pages Expected: {totalPages}", totalPages);
 
         // Click each progress-bar item one by one to trigger lazy loading
+        var tempDoc = new HtmlDocument();
+        tempDoc.LoadHtml("<root></root>");
+        var root = tempDoc.DocumentNode.SelectSingleNode("//root");
+
+        // Loop through progress bar clicks
         for (int i = 1; i <= totalPages; i++)
         {
-            Logger?.LogInformation("Activing ProgressBar to page {page} of {totalPages}", i, totalPages);
+            Logger?.LogInformation("Activating ProgressBar to page {page} of {totalPages}", i, totalPages);
+
+            // Click the progress bar item
             await page.EvaluateExpressionAsync($@"
-            (() => {{
-                const li = document.querySelector(`#progress-bar ul li[data-name='{i}']`);
-                if (li) li.click();
-            }})();");
+    (() => {{
+        const li = document.querySelector(`#progress-bar ul li[data-name='{i}']`);
+        if (li) li.click();
+    }})();");
+
             await Task.Delay(_pageLoadingTimeoutValue, cancellationToken);
-            Logger?.LogInformation("Moving ProgressBar from page {from} to page {page} of {totalPages}", i, i + 1, totalPages);
+
+            // Grab the <img> element for this page
+            var imgHtml = await page.EvaluateExpressionAsync<string>($@"
+        (() => {{
+            const img = document.querySelector(`img[data-number='{i}']`);
+            return img ? img.outerHTML : null;
+        }})();");
+
+            if (!string.IsNullOrEmpty(imgHtml))
+            {
+                var singleDoc = new HtmlDocument();
+                singleDoc.LoadHtml(imgHtml);
+                var node = singleDoc.DocumentNode.SelectSingleNode("//img");
+
+                if (node != null)
+                {
+                    root.AppendChild(node);
+                    Logger?.LogInformation("Collected <img> node for page {page}", i);
+                }
+            }
+            else
+            {
+                Logger?.LogWarning("No <img> found for page {page}", i);
+            }
         }
 
-        await page.WaitForSelectorAsync("#page-wrapper .img.swiper-slide.loaded img[src], .page img[src]");
+        // Now root.ChildNodes is a HtmlNodeCollection
+        var imgNodes = root.ChildNodes;
 
-        var imageUrls = await page.EvaluateExpressionAsync<string[]>(@"
-            Array.from(document.querySelectorAll('#page-wrapper .img.swiper-slide.loaded img[src], .page img[src]'))
-                 .map(img => img.getAttribute('src'))
-        ");
+        Logger?.LogInformation("Total <img> nodes collected: {count}", imgNodes.Count);
 
-        Logger?.LogInformation("Last Image: {image}", imageUrls.LastOrDefault());
-
-        // Get fully loaded HTML
-        var content = await page.GetContentAsync();
-        var document = new HtmlDocument();
-        document.LoadHtml(content);
-
-        // Collect all <img> nodes that now have src
-        var imgNodes = document.DocumentNode.SelectNodes(
-            "//div[contains(@class,'page')]//img | //div[@id='page-wrapper']//div[contains(@class,'img') and contains(@class,'swiper-slide') and contains(@class,'loaded')]/img"
-        );
-
-        Logger?.LogInformation("Number of Page found {totalPages}", imgNodes.Count);
-
+        // Pass directly to your existing method
         return ConvertToChapterPages(chapter, imgNodes);
     }
 
@@ -557,23 +623,7 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
 
         using var page = await browser.NewPageAsync();
         await page.SetUserAgentAsync(HttpClientDefaultUserAgent);
-        await SetTimeZone(page);
-
-
-        // Inject overrides BEFORE any site scripts execute
-        await page.EvaluateExpressionOnNewDocumentAsync(@"
-        // Neutralize devtools detection
-        const originalLog = console.log;
-        console.log = function(...args) {
-            if (args.length === 1 && args[0] === '[object HTMLDivElement]') {
-                return; // skip detection trick
-            }
-            return originalLog.apply(console, args);
-        };
-
-        // Override reload to do nothing
-        window.location.reload = () => console.log('Reload prevented');
-    ");
+        await PreparePageForNavigationAsync(page);
 
         // Navigate to /home
         var targetUri = new Uri(new Uri(_baseUri.ToString()), "home");
@@ -615,11 +665,40 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
         return vrfValue;
     }
 
-    private static async Task SetTimeZone(IPage page)
+    private async Task PreparePageForNavigationAsync(IPage page)
     {
-        var localTimeZone = TimeZoneInfo.Local.Id;
+        page.Console += (sender, e) =>
+        {
+            // e.Message contains the console message
+            Logger?.LogDebug($"[Browser Console] {e.Message.Type}: {e.Message.Text}");
 
-        await page.EmulateTimezoneAsync(localTimeZone);
+            // You can also inspect arguments
+            if(e.Message.Args != null)
+            {
+                foreach (var arg in e.Message.Args)
+                {
+                    Logger?.LogDebug($"   Arg: {arg.RemoteObject.Value}");
+                }
+            }
+        };
+
+
+
+        await page.EvaluateExpressionOnNewDocumentAsync(@"
+        // Neutralize devtools detection
+        const originalLog = console.log;
+        console.log = function(...args) {
+            if (args.length === 1 && args[0] === '[object HTMLDivElement]') {
+                return; // skip detection trick
+            }
+            return originalLog.apply(console, args);
+        };
+
+        // Override reload to do nothing
+        window.location.reload = () => console.log('Reload prevented');
+    ");
+
+        await page.EmulateTimezoneAsync(_timezone);
 
         var fixedDate = DateTime.Now;
 

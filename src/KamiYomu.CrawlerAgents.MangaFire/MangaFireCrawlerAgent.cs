@@ -7,9 +7,11 @@ using KamiYomu.CrawlerAgents.Core.Inputs;
 using Microsoft.Extensions.Logging;
 using PuppeteerSharp;
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Globalization;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using System.Web;
 using Page = KamiYomu.CrawlerAgents.Core.Catalog.Page;
 
@@ -327,39 +329,55 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
         Logger?.LogInformation("Number of Pages Expected: {totalPages}", totalPages);
 
         // Click each progress-bar item one by one to trigger lazy loading
+        var tempDoc = new HtmlDocument();
+        tempDoc.LoadHtml("<root></root>");
+        var root = tempDoc.DocumentNode.SelectSingleNode("//root");
+
+        // Loop through progress bar clicks
         for (int i = 1; i <= totalPages; i++)
         {
-            Logger?.LogInformation("Activing ProgressBar to page {page} of {totalPages}", i, totalPages);
+            Logger?.LogInformation("Activating ProgressBar to page {page} of {totalPages}", i, totalPages);
+
+            // Click the progress bar item
             await page.EvaluateExpressionAsync($@"
-            (() => {{
-                const li = document.querySelector(`#progress-bar ul li[data-name='{i}']`);
-                if (li) li.click();
-            }})();");
+    (() => {{
+        const li = document.querySelector(`#progress-bar ul li[data-name='{i}']`);
+        if (li) li.click();
+    }})();");
+
             await Task.Delay(_pageLoadingTimeoutValue, cancellationToken);
-            Logger?.LogInformation("Moving ProgressBar from page {from} to page {page} of {totalPages}", i, i + 1, totalPages);
+
+            // Grab the <img> element for this page
+            var imgHtml = await page.EvaluateExpressionAsync<string>($@"
+        (() => {{
+            const img = document.querySelector(`img[data-number='{i}']`);
+            return img ? img.outerHTML : null;
+        }})();");
+
+            if (!string.IsNullOrEmpty(imgHtml))
+            {
+                var singleDoc = new HtmlDocument();
+                singleDoc.LoadHtml(imgHtml);
+                var node = singleDoc.DocumentNode.SelectSingleNode("//img");
+
+                if (node != null)
+                {
+                    root.AppendChild(node);
+                    Logger?.LogInformation("Collected <img> node for page {page}", i);
+                }
+            }
+            else
+            {
+                Logger?.LogWarning("No <img> found for page {page}", i);
+            }
         }
 
-        await page.WaitForSelectorAsync("#page-wrapper .img.swiper-slide.loaded img[src], .page img[src]");
+        // Now root.ChildNodes is a HtmlNodeCollection
+        var imgNodes = root.ChildNodes;
 
-        var imageUrls = await page.EvaluateExpressionAsync<string[]>(@"
-            Array.from(document.querySelectorAll('#page-wrapper .img.swiper-slide.loaded img[src], .page img[src]'))
-                 .map(img => img.getAttribute('src'))
-        ");
+        Logger?.LogInformation("Total <img> nodes collected: {count}", imgNodes.Count);
 
-        Logger?.LogInformation("Last Image: {image}", imageUrls.LastOrDefault());
-
-        // Get fully loaded HTML
-        var content = await page.GetContentAsync();
-        var document = new HtmlDocument();
-        document.LoadHtml(content);
-
-        // Collect all <img> nodes that now have src
-        var imgNodes = document.DocumentNode.SelectNodes(
-            "//div[contains(@class,'page')]//img | //div[@id='page-wrapper']//div[contains(@class,'img') and contains(@class,'swiper-slide') and contains(@class,'loaded')]/img"
-        );
-
-        Logger?.LogInformation("Number of Page found {totalPages}", imgNodes.Count);
-
+        // Pass directly to your existing method
         return ConvertToChapterPages(chapter, imgNodes);
     }
 

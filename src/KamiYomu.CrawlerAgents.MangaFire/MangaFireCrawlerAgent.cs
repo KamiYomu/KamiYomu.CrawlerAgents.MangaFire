@@ -119,6 +119,10 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
         await PreparePageForNavigationAsync(page);
         await page.SetUserAgentAsync(HttpClientDefaultUserAgent);
 
+        var pageNumber = string.IsNullOrWhiteSpace(paginationOptions?.ContinuationToken)
+                        ? 1
+                        : int.Parse(paginationOptions.ContinuationToken);
+
         var targetUri = new Uri(new Uri(_baseUri.ToString()), "home");
         await page.GoToAsync(targetUri.ToString(), new NavigationOptions
         {
@@ -130,11 +134,16 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
         sb.AppendLine("(() => {");
         sb.AppendLine("    const form = document.querySelector('form');");
         sb.AppendLine("    if (form) {");
-        sb.AppendLine("        const hidden = document.createElement('input');");
-        sb.AppendLine("        hidden.type = 'hidden';");
-        sb.AppendLine("        hidden.name = 'language[]';");
-        sb.AppendLine($"        hidden.value = '{_language}';");
-        sb.AppendLine("        form.appendChild(hidden);");
+        sb.AppendLine("        const languageHidden = document.createElement('input');");
+        sb.AppendLine("        languageHidden.type = 'hidden';");
+        sb.AppendLine("        languageHidden.name = 'language[]';");
+        sb.AppendLine($"       languageHidden.value = '{_language}';");
+        sb.AppendLine("        form.appendChild(languageHidden);");
+        sb.AppendLine("        const pageHidden = document.createElement('input');");
+        sb.AppendLine("        pageHidden.type = 'hidden';");
+        sb.AppendLine("        pageHidden.name = 'page';");
+        sb.AppendLine($"       pageHidden.value = '{pageNumber}';");
+        sb.AppendLine("        form.appendChild(pageHidden);");
         sb.AppendLine("    }");
         sb.AppendLine("})();");
 
@@ -178,7 +187,7 @@ public class MangaFireCrawlerAgent : AbstractCrawlerAgent, ICrawlerAgent, IAsync
 
         return PagedResultBuilder<Manga>.Create()
             .WithData(mangas)
-            .WithPaginationOptions(new PaginationOptions(mangas.Count(), mangas.Count(), mangas.Count()))
+            .WithPaginationOptions(new PaginationOptions((pageNumber + 1).ToString()))
             .Build();
     }
 
